@@ -1,452 +1,294 @@
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Konum Seç</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+import React, { useState, useEffect, useRef } from 'react';
+import { MapContainer, TileLayer, Circle, useMapEvents, Marker } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--tg-theme-bg-color, #ffffff);
-            color: var(--tg-theme-text-color, #000000);
-            height: 100vh;
-            overflow: hidden;
-        }
+// Telegram Web App
+const tg = window.Telegram?.WebApp;
 
-        #map {
-            width: 100%;
-            height: calc(100vh - 80px);
-            z-index: 1;
-        }
+// Hizmet bölgeleri tanımları
+const SERVICE_AREAS = [
+  {
+    id: 'selcuklu',
+    name: 'Selçuklu Merkez',
+    lat: 37.8746,
+    lng: 32.4932,
+    radius: 2000,
+    color: '#3388ff'
+  },
+  {
+    id: 'meram',
+    name: 'Meram Bölgesi',
+    lat: 37.8421,
+    lng: 32.4683,
+    radius: 1500,
+    color: '#ff3333'
+  },
+  {
+    id: 'karatay',
+    name: 'Karatay Merkez',
+    lat: 37.8892,
+    lng: 32.5186,
+    radius: 1800,
+    color: '#33ff33'
+  },
+  {
+    id: 'beyhekim',
+    name: 'Beyhekim Mahallesi',
+    lat: 37.8656,
+    lng: 32.5243,
+    radius: 1200,
+    color: '#ff8c00'
+  },
+  {
+    id: 'bosna',
+    name: 'Bosna Hersek Mahallesi',
+    lat: 37.8901,
+    lng: 32.4721,
+    radius: 1000,
+    color: '#8a2be2'
+  },
+  {
+    id: 'yazir',
+    name: 'Yazır Mahallesi',
+    lat: 37.8534,
+    lng: 32.5412,
+    radius: 900,
+    color: '#ff1493'
+  }
+];
 
-        .controls {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: var(--tg-theme-bg-color, #ffffff);
-            padding: 15px;
-            border-top: 1px solid var(--tg-theme-hint-color, #999999);
-            z-index: 1000;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
+// İki nokta arası mesafe hesaplama
+const calculateDistance = (lat1, lng1, lat2, lng2) => {
+  const R = 6371e3;
+  const φ1 = lat1 * Math.PI/180;
+  const φ2 = lat2 * Math.PI/180;
+  const Δφ = (lat2-lat1) * Math.PI/180;
+  const Δλ = (lng2-lng1) * Math.PI/180;
 
-        .location-info {
-            font-size: 12px;
-            color: var(--tg-theme-hint-color, #999999);
-            text-align: center;
-            min-height: 20px;
-        }
+  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ/2) * Math.sin(Δλ/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 
-        .buttons {
-            display: flex;
-            gap: 10px;
-        }
+  return R * c;
+};
 
-        .btn {
-            flex: 1;
-            padding: 12px;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
+// Özel marker ikonu oluşturma
+const createCustomIcon = (color) => {
+  return L.divIcon({
+    html: `<div style="background: ${color}; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
+    className: 'custom-marker',
+    iconSize: [20, 20],
+    iconAnchor: [10, 10]
+  });
+};
 
-        .btn-primary {
-            background: var(--tg-theme-button-color, #0088cc);
-            color: var(--tg-theme-button-text-color, #ffffff);
-        }
+// Harita event handler komponenti
+function MapEventHandler({ onMapClick }) {
+  useMapEvents({
+    click: (e) => {
+      onMapClick(e.latlng.lat, e.latlng.lng);
+    }
+  });
+  return null;
+}
 
-        .btn-primary:hover {
-            opacity: 0.8;
-        }
+// Hizmet alanı circle komponenti
+function ServiceAreaCircle({ area, isSelected, onAreaClick }) {
+  const eventHandlers = {
+    click: (e) => {
+      onAreaClick(area, e.latlng.lat, e.latlng.lng);
+    }
+  };
 
-        .btn-primary:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
+  return (
+    <Circle
+      center={[area.lat, area.lng]}
+      radius={area.radius}
+      pathOptions={{
+        color: area.color,
+        fillColor: area.color,
+        fillOpacity: isSelected ? 0.5 : 0.2,
+        weight: isSelected ? 4 : 2
+      }}
+      eventHandlers={eventHandlers}
+    >
+    </Circle>
+  );
+}
 
-        .btn-secondary {
-            background: var(--tg-theme-secondary-bg-color, #f0f0f0);
-            color: var(--tg-theme-text-color, #000000);
-        }
+export default function TelegramMapApp() {
+  const [selectedLocation, setSelectedLocation] = useState(null);
+  const [selectedArea, setSelectedArea] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [locationInfo, setLocationInfo] = useState('Harita üzerinde bir yere tıklayın');
+  const mapRef = useRef();
 
-        .loading {
-            display: none;
-            text-align: center;
-            padding: 20px;
-            color: var(--tg-theme-hint-color, #999999);
-        }
+  useEffect(() => {
+    // Telegram Web App başlat
+    if (tg) {
+      tg.ready();
+      tg.expand();
+    }
+  }, []);
 
-        .marker-popup {
-            text-align: center;
-            font-size: 14px;
-        }
-
-        /* Telegram tema uyumu */
-        @media (prefers-color-scheme: dark) {
-            body {
-                background: #17212b;
-                color: #ffffff;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div id="map"></div>
+  // Konumun hizmet alanı içinde olup olmadığını kontrol et
+  const checkLocationInServiceArea = (lat, lng) => {
+    let foundArea = null;
     
-    <div class="controls">
-        <div class="location-info" id="locationInfo">
-            Harita üzerinde bir yere tıklayın
+    for (let area of SERVICE_AREAS) {
+      const distance = calculateDistance(lat, lng, area.lat, area.lng);
+      if (distance <= area.radius) {
+        foundArea = area;
+        break;
+      }
+    }
+
+    if (foundArea) {
+      selectServiceArea(foundArea, lat, lng);
+    } else {
+      setLocationInfo('❌ Bu bölgede hizmet veremiyoruz. Lütfen işaretli alanlardan birini seçin.');
+      setSelectedLocation(null);
+      setSelectedArea(null);
+    }
+  };
+
+  // Hizmet alanını seç
+  const selectServiceArea = (area, lat, lng) => {
+    setSelectedLocation({ lat, lng, area });
+    setSelectedArea(area);
+    setLocationInfo(`✅ ${area.name} seçildi`);
+  };
+
+  // Harita tıklama
+  const handleMapClick = (lat, lng) => {
+    checkLocationInServiceArea(lat, lng);
+  };
+
+  // Alan tıklama
+  const handleAreaClick = (area, lat, lng) => {
+    selectServiceArea(area, lat, lng);
+  };
+
+  // Mevcut konumu al
+  const getCurrentLocation = () => {
+    if (navigator.geolocation) {
+      setIsLoading(true);
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          
+          if (mapRef.current) {
+            mapRef.current.setView([lat, lng], 16);
+          }
+          checkLocationInServiceArea(lat, lng);
+          setIsLoading(false);
+        },
+        (error) => {
+          setIsLoading(false);
+          alert('Konum alınamadı: ' + error.message);
+        },
+        { timeout: 10000, enableHighAccuracy: true }
+      );
+    } else {
+      alert('Tarayıcınız konum servisini desteklemiyor.');
+    }
+  };
+
+  // Konumu gönder
+  const sendLocation = () => {
+    if (!selectedLocation || !selectedArea) {
+      alert('Lütfen önce bir hizmet alanı seçin!');
+      return;
+    }
+
+    try {
+      const data = {
+        lat: selectedLocation.lat,
+        lng: selectedLocation.lng,
+        area_id: selectedArea.id,
+        area_name: selectedArea.name,
+        area_color: selectedArea.color,
+        coordinates: `${selectedLocation.lat.toFixed(6)}, ${selectedLocation.lng.toFixed(6)}`
+      };
+
+      if (tg) {
+        tg.sendData(JSON.stringify(data));
+      } else {
+        console.log('Gönderilecek veri:', data);
+        alert('Test modunda - veri konsola yazıldı');
+      }
+    } catch (error) {
+      console.error('Veri gönderilirken hata:', error);
+      alert('Veri gönderilirken bir hata oluştu.');
+    }
+  };
+
+  return (
+    <div className="h-screen flex flex-col bg-white">
+      {/* Harita */}
+      <div className="flex-1 relative">
+        <MapContainer
+          center={[37.8746, 32.4932]}
+          zoom={14}
+          className="h-full w-full"
+          ref={mapRef}
+        >
+          <TileLayer
+            attribution='© OpenStreetMap contributors © CARTO'
+            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+            subdomains={['a', 'b', 'c', 'd']}
+            maxZoom={19}
+          />
+          
+          <MapEventHandler onMapClick={handleMapClick} />
+          
+          {/* Hizmet alanları */}
+          {SERVICE_AREAS.map((area) => (
+            <ServiceAreaCircle
+              key={area.id}
+              area={area}
+              isSelected={selectedArea?.id === area.id}
+              onAreaClick={handleAreaClick}
+            />
+          ))}
+          
+          {/* Seçilen konum marker */}
+          {selectedLocation && selectedArea && (
+            <Marker
+              position={[selectedLocation.lat, selectedLocation.lng]}
+              icon={createCustomIcon(selectedArea.color)}
+            />
+          )}
+        </MapContainer>
+      </div>
+
+      {/* Kontroller */}
+      <div className="bg-white border-t border-gray-200 p-4">
+        <div className="text-center text-sm text-gray-600 mb-3 min-h-5">
+          {locationInfo}
         </div>
         
-        <div class="buttons">
-            <button class="btn btn-secondary" onclick="getCurrentLocation()">
-                📍 Konumum
-            </button>
-            <button class="btn btn-primary" id="sendBtn" onclick="sendLocation()" disabled>
-                📤 Konumu Gönder
-            </button>
+        <div className="flex gap-3">
+          <button
+            onClick={getCurrentLocation}
+            disabled={isLoading}
+            className="flex-1 bg-gray-100 text-gray-800 py-3 px-4 rounded-lg font-medium hover:bg-gray-200 disabled:opacity-50"
+          >
+            {isLoading ? '📍 Alınıyor...' : '📍 Konumum'}
+          </button>
+          
+          <button
+            onClick={sendLocation}
+            disabled={!selectedLocation || !selectedArea}
+            className="flex-1 bg-blue-500 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            📤 Konumu Gönder
+          </button>
         </div>
+      </div>
     </div>
-
-    <div class="loading" id="loading">
-        Konum bilgisi alınıyor...
-    </div>
-
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script>
-        // Telegram Web App başlat
-        let tg = window.Telegram.WebApp;
-        tg.ready();
-        tg.expand();
-
-        // Harita değişkenleri
-        let map;
-        let selectedMarker;
-        let selectedLocation = null;
-        let serviceAreas = [];
-        let selectedArea = null;
-
-        // Hizmet bölgeleri tanımları
-        const SERVICE_AREAS = [
-            {
-                id: 'selcuklu',
-                name: 'Selçuklu Merkez',
-                lat: 37.8746,
-                lng: 32.4932,
-                radius: 2000, // 2 km
-                color: '#3388ff'
-            },
-            {
-                id: 'meram',
-                name: 'Meram Bölgesi',
-                lat: 37.8421,
-                lng: 32.4683,
-                radius: 1500, // 1.5 km
-                color: '#ff3333'
-            },
-            {
-                id: 'karatay',
-                name: 'Karatay Merkez',
-                lat: 37.8892,
-                lng: 32.5186,
-                radius: 1800, // 1.8 km
-                color: '#33ff33'
-            },
-            {
-                id: 'beyhekim',
-                name: 'Beyhekim Mahallesi',
-                lat: 37.8656,
-                lng: 32.5243,
-                radius: 1200, // 1.2 km
-                color: '#ff8c00'
-            },
-            {
-                id: 'bosna',
-                name: 'Bosna Hersek Mahallesi',
-                lat: 37.8901,
-                lng: 32.4721,
-                radius: 1000, // 1 km
-                color: '#8a2be2'
-            },
-            {
-                id: 'yazir',
-                name: 'Yazır Mahallesi',
-                lat: 37.8534,
-                lng: 32.5412,
-                radius: 900, // 900 m
-                color: '#ff1493'
-            }
-        ];
-
-        // Haritayı başlat
-        function initMap() {
-            // Varsayılan konum (Konya)
-            const defaultLat = 37.8746;
-            const defaultLng = 32.4932;
-
-            map = L.map('map').setView([defaultLat, defaultLng], 14);
-
-            // OpenStreetMap tile layer
-            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
-                attribution: '© OpenStreetMap contributors',
-                maxZoom: 19
-            }).addTo(map);
-
-            // Harita tıklama olayı - sadece hizmet alanlarına izin ver
-            map.on('click', function(e) {
-                checkLocationInServiceArea(e.latlng.lat, e.latlng.lng);
-            });
-
-            // Hizmet alanlarını çiz
-            drawServiceAreas();
-
-            // Kullanıcının mevcut konumunu al (isteğe bağlı)
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(
-                    function(position) {
-                        const lat = position.coords.latitude;
-                        const lng = position.coords.longitude;
-                        map.setView([lat, lng], 15);
-                    },
-                    function(error) {
-                        console.log('Konum alınamadı:', error);
-                    }
-                );
-            }
-        }
-
-        // Hizmet alanlarını haritaya çiz
-        function drawServiceAreas() {
-            SERVICE_AREAS.forEach(area => {
-                // Yuvarlak alan çiz
-                const circle = L.circle([area.lat, area.lng], {
-                    color: area.color,
-                    fillColor: area.color,
-                    fillOpacity: 0.2,
-                    radius: area.radius,
-                    weight: 2
-                }).addTo(map);
-
-                // Alan adını gösteren popup
-                const popupContent = `
-                    <div style="text-align: center; font-weight: bold; color: ${area.color};">
-                        ${area.name}
-                    </div>
-                    <div style="text-align: center; font-size: 12px; color: #666;">
-                        Hizmet Alanı - ${(area.radius/1000).toFixed(1)} km çap
-                    </div>
-                `;
-                
-                circle.bindPopup(popupContent);
-                
-                // Tıklama olayı ekle
-                circle.on('click', function(e) {
-                    selectServiceArea(area, e.latlng.lat, e.latlng.lng);
-                    L.DomEvent.stopPropagation(e); // Harita tıklama olayının çalışmasını engelle
-                });
-
-                // Hover efekti
-                circle.on('mouseover', function(e) {
-                    e.target.setStyle({
-                        fillOpacity: 0.4,
-                        weight: 3
-                    });
-                    circle.openPopup();
-                });
-
-                circle.on('mouseout', function(e) {
-                    if (selectedArea?.id !== area.id) {
-                        e.target.setStyle({
-                            fillOpacity: 0.2,
-                            weight: 2
-                        });
-                    }
-                    circle.closePopup();
-                });
-
-                serviceAreas.push({
-                    area: area,
-                    circle: circle
-                });
-            });
-        }
-
-        // Tıklanan konumun hizmet alanı içinde olup olmadığını kontrol et
-        function checkLocationInServiceArea(lat, lng) {
-            let foundArea = null;
-            
-            for (let areaData of serviceAreas) {
-                const area = areaData.area;
-                const distance = calculateDistance(lat, lng, area.lat, area.lng);
-                
-                if (distance <= area.radius) {
-                    foundArea = areaData;
-                    break;
-                }
-            }
-
-            if (foundArea) {
-                selectServiceArea(foundArea.area, lat, lng);
-            } else {
-                // Hizmet alanı dışında tıklanmış
-                document.getElementById('locationInfo').innerHTML = 
-                    '<span style="color: #ff3333;">❌ Bu bölgede hizmet veremiyoruz. Lütfen işaretli alanlardan birini seçin.</span>';
-                
-                // Gönder butonunu deaktif et
-                document.getElementById('sendBtn').disabled = true;
-                
-                // Önceki seçimi temizle
-                if (selectedMarker) {
-                    map.removeLayer(selectedMarker);
-                    selectedMarker = null;
-                }
-                selectedLocation = null;
-                selectedArea = null;
-            }
-        }
-
-        // Hizmet alanını seç
-        function selectServiceArea(area, lat, lng) {
-            // Önceki marker'ı kaldır
-            if (selectedMarker) {
-                map.removeLayer(selectedMarker);
-            }
-
-            // Önceki seçili alanın stilini resetle
-            if (selectedArea) {
-                const prevAreaData = serviceAreas.find(a => a.area.id === selectedArea.id);
-                if (prevAreaData) {
-                    prevAreaData.circle.setStyle({
-                        fillOpacity: 0.2,
-                        weight: 2
-                    });
-                }
-            }
-
-            // Yeni seçili alanın stilini değiştir
-            const currentAreaData = serviceAreas.find(a => a.area.id === area.id);
-            if (currentAreaData) {
-                currentAreaData.circle.setStyle({
-                    fillOpacity: 0.5,
-                    weight: 4
-                });
-            }
-
-            // Yeni marker ekle
-            selectedMarker = L.marker([lat, lng], {
-                icon: L.divIcon({
-                    html: `<div style="background: ${area.color}; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
-                    className: 'custom-marker',
-                    iconSize: [20, 20],
-                    iconAnchor: [10, 10]
-                })
-            }).addTo(map);
-
-            selectedLocation = { lat, lng, area: area };
-            selectedArea = area;
-
-            // Gönder butonunu aktif et
-            document.getElementById('sendBtn').disabled = false;
-
-            // Bilgi metnini güncelle
-            document.getElementById('locationInfo').innerHTML = 
-                `✅ <strong style="color: ${area.color};">${area.name}</strong> seçildi<br>
-                <span style="font-size: 11px; color: #666;">📍 ${lat.toFixed(6)}, ${lng.toFixed(6)}</span>`;
-        }
-
-        // İki nokta arası mesafe hesapla (metre cinsinden)
-        function calculateDistance(lat1, lng1, lat2, lng2) {
-            const R = 6371e3; // Dünya yarıçapı metre cinsinden
-            const φ1 = lat1 * Math.PI/180;
-            const φ2 = lat2 * Math.PI/180;
-            const Δφ = (lat2-lat1) * Math.PI/180;
-            const Δλ = (lng2-lng1) * Math.PI/180;
-
-            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                      Math.cos(φ1) * Math.cos(φ2) *
-                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-
-            return R * c; // metre
-        }
-
-        // Mevcut konumu al ve hizmet alanı kontrolü yap
-        function getCurrentLocation() {
-            if (navigator.geolocation) {
-                document.getElementById('loading').style.display = 'block';
-                
-                navigator.geolocation.getCurrentPosition(
-                    function(position) {
-                        const lat = position.coords.latitude;
-                        const lng = position.coords.longitude;
-                        
-                        map.setView([lat, lng], 16);
-                        checkLocationInServiceArea(lat, lng);
-                        
-                        document.getElementById('loading').style.display = 'none';
-                    },
-                    function(error) {
-                        document.getElementById('loading').style.display = 'none';
-                        alert('Konum alınamadı: ' + error.message);
-                    },
-                    { timeout: 10000, enableHighAccuracy: true }
-                );
-            } else {
-                alert('Tarayıcınız konum servisini desteklemiyor.');
-            }
-        }
-
-        // Seçilen hizmet alanını Telegram'a gönder
-        async function sendLocation() {
-            if (!selectedLocation || !selectedArea) {
-                alert('Lütfen önce bir hizmet alanı seçin!');
-                return;
-            }
-
-            try {
-                const data = {
-                    lat: selectedLocation.lat,
-                    lng: selectedLocation.lng,
-                    area_id: selectedArea.id,
-                    area_name: selectedArea.name,
-                    area_color: selectedArea.color,
-                    coordinates: `${selectedLocation.lat.toFixed(6)}, ${selectedLocation.lng.toFixed(6)}`
-                };
-
-                // Telegram Web App'e veri gönder
-                tg.sendData(JSON.stringify(data));
-                
-            } catch (error) {
-                console.error('Veri gönderilirken hata:', error);
-                alert('Veri gönderilirken bir hata oluştu.');
-            }
-        }
-
-        // Sayfa yüklendiğinde haritayı başlat
-        document.addEventListener('DOMContentLoaded', function() {
-            initMap();
-        });
-
-        // Telegram tema değişikliklerini dinle
-        tg.onEvent('themeChanged', function() {
-            // Tema değiştiğinde stilleri güncelle
-            document.body.style.backgroundColor = tg.themeParams.bg_color;
-            document.body.style.color = tg.themeParams.text_color;
-        });
-    </script>
-</body>
-</html>
+  );
+}
