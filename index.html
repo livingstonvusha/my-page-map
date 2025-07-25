@@ -1,42 +1,290 @@
 <!DOCTYPE html>
-<html>
+<html lang="tr">
 <head>
-  <meta charset="utf-8" />
-  <title>Harita Üzerinde Koordinat Alma</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
-  <style>
-    #map { height: 100vh; }
-    .info {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      background: white;
-      padding: 8px;
-      z-index: 1000;
-      font-family: sans-serif;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Konum Seç</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--tg-theme-bg-color, #ffffff);
+            color: var(--tg-theme-text-color, #000000);
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #map {
+            width: 100%;
+            height: calc(100vh - 80px);
+            z-index: 1;
+        }
+
+        .controls {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--tg-theme-bg-color, #ffffff);
+            padding: 15px;
+            border-top: 1px solid var(--tg-theme-hint-color, #999999);
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .location-info {
+            font-size: 12px;
+            color: var(--tg-theme-hint-color, #999999);
+            text-align: center;
+            min-height: 20px;
+        }
+
+        .buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--tg-theme-button-color, #0088cc);
+            color: var(--tg-theme-button-text-color, #ffffff);
+        }
+
+        .btn-primary:hover {
+            opacity: 0.8;
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+            color: var(--tg-theme-text-color, #000000);
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: var(--tg-theme-hint-color, #999999);
+        }
+
+        .marker-popup {
+            text-align: center;
+            font-size: 14px;
+        }
+
+        /* Telegram tema uyumu */
+        @media (prefers-color-scheme: dark) {
+            body {
+                background: #17212b;
+                color: #ffffff;
+            }
+        }
+    </style>
 </head>
 <body>
+    <div id="map"></div>
+    
+    <div class="controls">
+        <div class="location-info" id="locationInfo">
+            Harita üzerinde bir yere tıklayın
+        </div>
+        
+        <div class="buttons">
+            <button class="btn btn-secondary" onclick="getCurrentLocation()">
+                📍 Konumum
+            </button>
+            <button class="btn btn-primary" id="sendBtn" onclick="sendLocation()" disabled>
+                📤 Konumu Gönder
+            </button>
+        </div>
+    </div>
 
-<div class="info" id="coords">Tıklanacak yerin koordinatı burada gözükecek</div>
-<div id="map"></div>
+    <div class="loading" id="loading">
+        Konum bilgisi alınıyor...
+    </div>
 
-<script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
-<script>
-  var map = L.map('map').setView([39.925, 32.8369], 6); // Türkiye merkezi
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+        // Telegram Web App başlat
+        let tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap contributors'
-  }).addTo(map);
+        // Harita değişkenleri
+        let map;
+        let selectedMarker;
+        let selectedLocation = null;
 
-  map.on('click', function(e) {
-    const lat = e.latlng.lat.toFixed(6);
-    const lng = e.latlng.lng.toFixed(6);
-    document.getElementById('coords').innerText = `Koordinatlar: ${lat}, ${lng}`;
-  });
-</script>
+        // Haritayı başlat
+        function initMap() {
+            // Varsayılan konum (İstanbul)
+            const defaultLat = 41.0082;
+            const defaultLng = 28.9784;
 
+            map = L.map('map').setView([defaultLat, defaultLng], 10);
+
+            // OpenStreetMap tile layer
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors',
+                maxZoom: 19
+            }).addTo(map);
+
+            // Harita tıklama olayı
+            map.on('click', function(e) {
+                selectLocation(e.latlng.lat, e.latlng.lng);
+            });
+
+            // Kullanıcının mevcut konumunu al (isteğe bağlı)
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
+                        const lat = position.coords.latitude;
+                        const lng = position.coords.longitude;
+                        map.setView([lat, lng], 15);
+                    },
+                    function(error) {
+                        console.log('Konum alınamadı:', error);
+                    }
+                );
+            }
+        }
+
+        // Konum seçme fonksiyonu
+        async function selectLocation(lat, lng) {
+            // Önceki marker'ı kaldır
+            if (selectedMarker) {
+                map.removeLayer(selectedMarker);
+            }
+
+            // Yeni marker ekle
+            selectedMarker = L.marker([lat, lng])
+                .addTo(map)
+                .bindPopup('<div class="marker-popup">Seçilen konum</div>')
+                .openPopup();
+
+            selectedLocation = { lat, lng };
+
+            // Gönder butonunu aktif et
+            document.getElementById('sendBtn').disabled = false;
+
+            // Adres bilgisini al
+            try {
+                const address = await getAddressFromCoords(lat, lng);
+                document.getElementById('locationInfo').textContent = 
+                    `📍 ${lat.toFixed(6)}, ${lng.toFixed(6)} - ${address}`;
+            } catch (error) {
+                document.getElementById('locationInfo').textContent = 
+                    `📍 ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+            }
+        }
+
+        // Koordinatlardan adres alma (Nominatim API)
+        async function getAddressFromCoords(lat, lng) {
+            try {
+                const response = await fetch(
+                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`
+                );
+                const data = await response.json();
+                return data.display_name || 'Adres bulunamadı';
+            } catch (error) {
+                console.error('Adres alınamadı:', error);
+                return 'Adres bulunamadı';
+            }
+        }
+
+        // Mevcut konumu al
+        function getCurrentLocation() {
+            if (navigator.geolocation) {
+                document.getElementById('loading').style.display = 'block';
+                
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
+                        const lat = position.coords.latitude;
+                        const lng = position.coords.longitude;
+                        
+                        map.setView([lat, lng], 16);
+                        selectLocation(lat, lng);
+                        
+                        document.getElementById('loading').style.display = 'none';
+                    },
+                    function(error) {
+                        document.getElementById('loading').style.display = 'none';
+                        alert('Konum alınamadı: ' + error.message);
+                    },
+                    { timeout: 10000, enableHighAccuracy: true }
+                );
+            } else {
+                alert('Tarayıcınız konum servisini desteklemiyor.');
+            }
+        }
+
+        // Seçilen konumu Telegram'a gönder
+        async function sendLocation() {
+            if (!selectedLocation) {
+                alert('Lütfen önce bir konum seçin!');
+                return;
+            }
+
+            try {
+                const address = await getAddressFromCoords(selectedLocation.lat, selectedLocation.lng);
+                
+                const data = {
+                    lat: selectedLocation.lat,
+                    lng: selectedLocation.lng,
+                    address: address
+                };
+
+                // Telegram Web App'e veri gönder
+                tg.sendData(JSON.stringify(data));
+                
+            } catch (error) {
+                console.error('Veri gönderilirken hata:', error);
+                
+                // Hata durumunda da gönder (adres bilgisi olmadan)
+                const data = {
+                    lat: selectedLocation.lat,
+                    lng: selectedLocation.lng,
+                    address: 'Adres alınamadı'
+                };
+                
+                tg.sendData(JSON.stringify(data));
+            }
+        }
+
+        // Sayfa yüklendiğinde haritayı başlat
+        document.addEventListener('DOMContentLoaded', function() {
+            initMap();
+        });
+
+        // Telegram tema değişikliklerini dinle
+        tg.onEvent('themeChanged', function() {
+            // Tema değiştiğinde stilleri güncelle
+            document.body.style.backgroundColor = tg.themeParams.bg_color;
+            document.body.style.color = tg.themeParams.text_color;
+        });
+    </script>
 </body>
 </html>
